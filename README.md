@@ -214,14 +214,11 @@ sslh
 └── utils
 ```
 
-## Authors
-This repository has been created by Etienne Labbé (Labbeti on Github).
+## Authors.
 
 It contains also some code from the following authors :
-- Léo Cancès (leocances on github)
-  - For AudioSet, ESC10, GSC, PVC and UBS8K datasets base code.
-- Qiuqiang Kong (qiuqiangkong on Github)
-  - For MobileNetV1 & V2 model implementation from [PANN](https://github.com/qiuqiangkong/audioset_tagging_cnn).
+- Rerechan02
+  - For F base code
 
 ## Additional notes
 - This project has been made with Ubuntu 20.04 and Python 3.8.5.
