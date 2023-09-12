@@ -1,0 +1,278 @@
+#! /usr/bin/perl -w
+
+# Test script for sslh -- mass communication
+
+# This creates many clients that perform concurrent
+# connections, disconnect at any time, and try to generally
+# behave as badly as possible.
+
+# It can be used to test sslh behaves properly with many
+# clients, however its main use is to get an idea of how
+# much load it can take on your system before things start
+# to go wrong.
+
+use strict;
+use IO::Socket::INET6;
+use Data::Dumper;
+use Conf::Libconfig;
+
+## BEGIN TEST CONFIG
+
+# How many total clients to we start? Each client will pick
+# a new protocol among what's in test.cfg.
+my $NUM_CNX = 16;
+
+# Delay between starting new processes when starting up. If
+# you start 200 processes in under a second, things go wrong
+# and it's not sslh's fault (typically the echosrv won't be
+# forking fast enough).
+my $start_time_delay = .5;
+
+# Max times we repeat the test string: allows to test for
+# large messages.
+my $block_rpt = 5;
+
+# Probability to stop a client after a message (e.g. with
+# .01 a client will send an average of 100 messages before
+# disconnecting).
+my $stop_client_probability = .0001;
+
+##END CONFIG
+
+my $conf = new Conf::Libconfig;
+$conf->read_file("test.cfg");
+
+
+# Pick one address for TCP and one for UDP
+my @listen = @{$conf->fetch_array("listen")};
+my ($sslh_tcp_address, $sslh_udp_address);
+
+foreach my $l (@listen) {
+    if ($l->{is_udp}) {
+        $sslh_udp_address //= "$l->{host}:$l->{port}";
+    } else {
+        $sslh_tcp_address //= "$l->{host}:$l->{port}";
+    }
+    last if defined $sslh_tcp_address and defined $sslh_udp_address;
+}
+
+
+# code snippets to connect to each protocol
+my %connect_params = (
+    regex => {
+        is_udp => 1,
+        sleep => 0,
+        test_data => "foo bar",
+        resp_len => 12,
+    },
+    ssh => {
+        sleep => 20,  # So it times out 50% of connections
+        test_data => "SSH-2.0 hello",
+        resp_len => 18,  # length "ssh: SSH-2.0 hello" => 18
+    },
+    tinc => {
+        sleep => 0,
+        test_data => "0 ",
+        resp_len => 8, # length "tinc: 0 " => 10
+    },
+    openvpn => {
+        sleep => 0,
+        test_data => "\x00\x00",
+        resp_len => 11,  # length "openvpn: \x0\x0" => 11
+    },
+);
+
+sub connect_service {
+    my ($cnx, $service) = @_;
+
+    my $params = $connect_params{$service};
+
+    sleep rand $params->{sleep};
+    my $test_data = $params->{test_data};
+    syswrite $cnx, $test_data;
+    sleep 1;
+    sysread $cnx, my $r, $params->{resp_len}; 
+
+    my $expected = "$service: $test_data";
+    return ($r eq $expected);
+}
+
+
+sub client {
+    my ($protocol, $client_id, $fd_out) = @_;
+
+    my $service = $protocol->{name};
+
+    while (1) {
+        my $r;
+        #warn "$client_id: connect $sslh_tcp_address\n";
+        my $cnx = new IO::Socket::INET(PeerHost => $sslh_tcp_address);
+        die "$@\n" if (!$cnx);
+
+        my $cnt = 0;
+
+        #warn "$client_id: connecting $service\n";
+
+        if (not connect_service($cnx, $service)) {
+            print $fd_out "$client_id\t0\tC\n";
+            warn "$client_id: connecting failed\n";
+            exit;
+        }
+
+        #warn "$client_id: shoveling $service\n";
+
+        while (1) {
+            my $test_data = "$service $cnt" x int(rand($block_rpt)+1) . "\n";
+            print $cnx $test_data;
+            $r = <$cnx>;
+            my $expected= "$test_data";
+            my $r_l = length $r;
+            my $e_l = length $expected;
+            $fd_out->autoflush;
+            my $error = "";
+            $error = "E" if $r ne $expected;
+            print $fd_out ("$client_id\t$r_l\t$error\n");
+            ($? = 1, die "$service got [$r] expected [$expected]\n") if ($r ne $expected);
+            if (rand(1) < $stop_client_probability) {
+                print $fd_out ("$client_id\t$r_l\tD\n");
+                last;
+            }
+            $cnt++;
+        }
+    }
+    exit 0;
+}
+
+# For now, a simple regex client
+sub udp_client {
+    my ($protocol, $client_id, $fd_out) = @_;
+
+    warn "UDP client starts\n";
+
+    while (1) {
+        my $cnx = new IO::Socket::INET(Proto => 'udp', PeerHost => $sslh_udp_address);
+        #        my $cnx; socket $cnx, PF_INET, SOCK_DGRAM, 0 or die "socket: $!\n";
+        die "$@\n" if (!$cnx);
+        my $cnt = 0;
+
+        while (1) {
+            my $test_data = "foo udp $cnt"x int(rand($block_rpt)+1). "\n";
+
+            my $ipaddr   = inet_aton("localhost");
+            my $portaddr = sockaddr_in(8086, $ipaddr);
+            my $res = send($cnx, $test_data, 0, $portaddr);
+            if ($res != length($test_data)) {
+                die "cannot sendto: $!";
+            }
+
+            my $expected= "$protocol->{name}: $test_data";
+
+            my $r;
+            defined(recv($cnx, $r, length $expected, 0)) or die "recv: $!\n";
+
+            my $r_l = length $r;
+            my $e_l = length $expected;
+            $fd_out->autoflush;
+            my $error = "";
+            $error = "M" if $r ne $expected;
+            print $fd_out ("$client_id\t$r_l\t$error\n");
+            ($? = 1, die "udp got [$r] expected [$expected]\n") if ($r ne $expected);
+            if (rand(1) < $stop_client_probability) {
+                print $fd_out ("$client_id\t$r_l\tD\n");
+                last;
+            }
+            $cnt++;
+        }
+    }
+}
+
+foreach my $p (@{$conf->fetch_array("protocols")}) {
+    if (!fork) {
+        my $udp = $p->{is_udp} ? "--udp" : "";
+        my $cmd = "./echosrv $udp -p $p->{host}:$p->{port} --prefix '$p->{name}: ' 2> /dev/null";
+        warn "$cmd\n";
+        exec $cmd;
+        exit;
+    }
+}
+
+warn "Don't forget to run sslh -F test.cfg!\n";
+
+sleep 2; # Let echosrv's and sslh start
+
+my ($c_in, $c_out);
+pipe $c_in, $c_out;
+
+my @protocols = @{$conf->fetch_array("protocols")};
+
+if (!fork) {
+    # Process that starts all the clients
+    for my $client_num (1 .. $NUM_CNX) {
+            if (!fork) {
+                my @supported_protocols = keys %connect_params;
+                my $p_name = $supported_protocols[rand @supported_protocols];
+                my @p = grep { $_->{name} eq $p_name } @protocols;
+                my $p = shift @p;
+                if ($p->{is_udp}) {
+                    udp_client($p, "$p->{name}$client_num", $c_out);
+                } else {
+                    client($p, "$p->{name}$client_num", $c_out);
+                }
+                exit;
+            }
+            # Give a little time so we don't overrun the
+            # listen(2) backlog.
+            select undef, undef, undef, $start_time_delay;
+    }
+    exit;
+} else {
+    my %data;
+
+    # The condition here selects between pretty output or
+    # raw output
+    if (1) {
+        my $CLEAR_LINE = "\033[2K";
+        my $CURSOR_HOME = "\033[1;1H";
+        my $CLEAR_SCREEN = "\033[2J";
+
+        # Process that retrieves client output to pretty print
+        print $CLEAR_SCREEN; # Clear screen
+        while (<$c_in>) {
+            chop;
+            my ($client_id, $r_l, $error, @rest) = split /\t/, $_;
+
+            $data{$client_id} = [ 0, ""] if not exists $data{$client_id};
+            my ($curr_rcv) = ${$data{$client_id}}[0] + $r_l;;
+            $error //= "";
+            my ($curr_error) = "${$data{$client_id}}[1]$error";
+            # Consolidate into... roman numerals!
+            $curr_error =~ s/D{10}/X/;
+            $curr_error =~ s/X{10}/C/;
+            $curr_error =~ s/C{10}/M/;
+
+            $data{$client_id} = [ $r_l + $curr_rcv, "$curr_error$error" ];
+
+
+            $client_id =~ /(\d+)/;
+            my $i = $1;
+            #            print $CURSOR_HOME;
+            print "\033[$i;1H$CLEAR_LINE$client_id\t$curr_rcv\t$curr_error\n";
+            #foreach my $i (sort keys %data) {
+            #    ($r_l, $error) = @{$data{$i}};
+            #    print "$CLEAR_LINE$i\t$r_l\t$error\n"; 
+        }
+    } else {
+        # Just print the client outputs
+        while (<$c_in>) {
+            print;
+        }
+    }
+}
+
+warn "waiting\n";
+wait;
+warn "finished waiting\n";
+
+
+`killall echosrv`;
+
