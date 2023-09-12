@@ -666,5 +666,5 @@ You should keep a copy of the `generated-docs` directory for the life of the ser
 Remember to save your `~/.ssh/id_rsa` and `~/.ssh/id_rsa.pub` SSH keys too. You'll need them in case you want to troubleshoot or perform maintenance on your server later.
 
 ## Contact
-Maintainer:
-- Rerechan02 "Rerechan02": widyabakti02@gmail.com
+电子邮件:
+- [Rerechan02](widyabakti02@gmail.com)
