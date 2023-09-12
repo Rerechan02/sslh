@@ -4,10 +4,10 @@
   
  ![Rerechan02 card name](https://cardivo.vercel.app/api?name=Rerechan02『𝐅𝐍』&description=Hi,%20everyone!%20and%20Nice%20to%20meet%20you%20%F0%9F%91%8B&image=https://raw.githubusercontent.com/Rerechan02/simple-xray/main/funny1.jpg?v=4&backgroundColor=%23ecf0f1&telegram=/&github=Rerechan02&pattern=leaf&colorPattern=%23eaeaea)
 
-<b><details><summary>DASAR</summary></b>
+
 sslh -- A ssl/ssh multiplexer
 =============================
-
+<b><details><summary>DASAR</summary></b>
 `sslh` accepts connections on specified ports, and forwards
 them further based on tests performed on the first data
 packet sent by the remote client.
@@ -30,17 +30,14 @@ daemon: privilege and capabilities dropping, inetd support,
 systemd support, transparent proxying, chroot, logging,
 IPv4 and IPv6, TCP and UDP, a fork-based and a select-based
 model, and more.
+</details>
 
-Install
+<b><details><summary>INSTALL</summary></b>
 =======
-
-Please refer to the [install guide](doc/INSTALL.md).
 
 
 Configuration
 =============
-
-Please refer to the [configuration guide](doc/config.md).
 
 
 
